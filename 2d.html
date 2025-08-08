@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>2D Tic Tac Toe WebGL with AI</title>
+<style>
+  body { margin: 0; background: #111; color: #fff; font-family: sans-serif; text-align: center; }
+  canvas { display: block; margin: auto; background: #222; cursor: pointer; }
+  #controls { margin-top: 10px; }
+</style>
+</head>
+<body>
+<h1>2D Tic Tac Toe (WebGL + AI)</h1>
+<canvas id="glcanvas" width="500" height="500"></canvas>
+<div id="controls">
+  Epsilon: <input type="range" id="epsilonSlider" min="0" max="1" step="0.01" value="0.3"> <span id="epsilonValue">0.3</span>
+</div>
+<script>
+const canvas = document.getElementById('glcanvas');
+const gl = canvas.getContext('webgl');
+if (!gl) { alert('WebGL not supported'); throw new Error('WebGL not supported'); }
+
+const vertCode = `
+attribute vec2 coordinates;
+void main(void) {
+  gl_Position = vec4(coordinates, 0.0, 1.0);
+}`;
+
+const fragCode = `
+void main(void) {
+  gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
+}`;
+
+function compileShader(type, source) {
+  const shader = gl.createShader(type);
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    console.error('Shader compile error:', gl.getShaderInfoLog(shader));
+    gl.deleteShader(shader);
+    return null;
+  }
+  return shader;
+}
+
+const vertShader = compileShader(gl.VERTEX_SHADER, vertCode);
+const fragShader = compileShader(gl.FRAGMENT_SHADER, fragCode);
+
+const shaderProgram = gl.createProgram();
+gl.attachShader(shaderProgram, vertShader);
+gl.attachShader(shaderProgram, fragShader);
+gl.linkProgram(shaderProgram);
+if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
+  console.error('Program link error:', gl.getProgramInfoLog(shaderProgram));
+}
+
+gl.useProgram(shaderProgram);
+
+const coord = gl.getAttribLocation(shaderProgram, "coordinates");
+gl.enableVertexAttribArray(coord);
+
+let board = Array(9).fill(null);
+let currentPlayer = 'X';
+let epsilon = 0.3;
+
+document.getElementById('epsilonSlider').addEventListener('input', (e) => {
+  epsilon = parseFloat(e.target.value);
+  document.getElementById('epsilonValue').textContent = epsilon.toFixed(2);
+});
+
+function drawBoard() {
+  const lines = [
+    -0.33, -1, -0.33, 1,
+     0.33, -1,  0.33, 1,
+    -1, -0.33, 1, -0.33,
+    -1,  0.33, 1,  0.33
+  ];
+  const lineBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, lineBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(lines), gl.STATIC_DRAW);
+  gl.vertexAttribPointer(coord, 2, gl.FLOAT, false, 0, 0);
+  gl.clearColor(0.13, 0.13, 0.13, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.drawArrays(gl.LINES, 0, lines.length / 2);
+
+  board.forEach((cell, i) => {
+    if (!cell) return;
+    const x = (i % 3 - 1) * 0.66;
+    const y = (1 - Math.floor(i / 3)) * 0.66;
+    drawMark(cell, x, y);
+  });
+}
+
+function drawMark(player, cx, cy) {
+  const size = 0.15;
+  let shape;
+  if (player === 'X') {
+    shape = [
+      cx-size, cy-size, cx+size, cy+size,
+      cx-size, cy+size, cx+size, cy-size
+    ];
+  } else {
+    shape = [];
+    const steps = 20;
+    for (let i = 0; i < steps; i++) {
+      const theta1 = (i / steps) * 2 * Math.PI;
+      const theta2 = ((i+1) / steps) * 2 * Math.PI;
+      shape.push(cx + size*Math.cos(theta1), cy + size*Math.sin(theta1));
+      shape.push(cx + size*Math.cos(theta2), cy + size*Math.sin(theta2));
+    }
+  }
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(shape), gl.STATIC_DRAW);
+  gl.vertexAttribPointer(coord, 2, gl.FLOAT, false, 0, 0);
+  gl.drawArrays(gl.LINES, 0, shape.length/2);
+}
+
+function checkWinner(b) {
+  const wins = [
+    [0,1,2],[3,4,5],[6,7,8],
+    [0,3,6],[1,4,7],[2,5,8],
+    [0,4,8],[2,4,6]
+  ];
+  for (let combo of wins) {
+    const [a,b1,c] = combo;
+    if (b[a] && b[a] === b[b1] && b[a] === b[c]) return b[a];
+  }
+  return b.every(v => v) ? 'Draw' : null;
+}
+
+function aiMove() {
+  const empty = board.map((v,i) => v?null:i).filter(v => v!==null);
+  if (Math.random() < epsilon) {
+    return empty[Math.floor(Math.random()*empty.length)];
+  }
+  // Simple heuristic: win if possible, block if needed
+  for (let move of empty) {
+    const bcopy = board.slice();
+    bcopy[move] = 'O';
+    if (checkWinner(bcopy) === 'O') return move;
+  }
+  for (let move of empty) {
+    const bcopy = board.slice();
+    bcopy[move] = 'X';
+    if (checkWinner(bcopy) === 'X') return move;
+  }
+  return empty[0];
+}
+
+canvas.addEventListener('click', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const cellX = Math.floor(mx / (canvas.width/3));
+  const cellY = Math.floor(my / (canvas.height/3));
+  const idx = cellY * 3 + cellX;
+  if (!board[idx] && currentPlayer === 'X') {
+    board[idx] = 'X';
+    let res = checkWinner(board);
+    if (res) {
+      alert(res + ' wins!');
+      board = Array(9).fill(null);
+      drawBoard();
+      return;
+    }
+    const aiIdx = aiMove();
+    board[aiIdx] = 'O';
+    res = checkWinner(board);
+    if (res) {
+      alert(res + ' wins!');
+      board = Array(9).fill(null);
+    }
+  }
+  drawBoard();
+});
+
+drawBoard();
+</script>
+</body>
+</html>
