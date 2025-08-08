@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>3D Drone Simulation Game with Buildings</title>
+<style>
+  body { margin: 0; overflow: hidden; background: #87ceeb; }
+  #score { position: absolute; top: 20px; left: 20px; font-size: 24px; color: white; font-family: Arial, sans-serif; }
+</style>
+</head>
+<body>
+<div id="score">Score: 0</div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.153.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.153.0/examples/js/controls/PointerLockControls.js"></script>
+<script>
+  // Scene setup
+  const scene = new THREE.Scene();
+
+  // Camera setup
+  const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+
+  // Renderer
+  const renderer = new THREE.WebGLRenderer({antialias: true});
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  // Lighting
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+  scene.add(ambientLight);
+  const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+  directionalLight.position.set(10, 20, 10);
+  scene.add(directionalLight);
+
+  // Ground plane
+  const groundGeo = new THREE.PlaneGeometry(100, 100);
+  const groundMat = new THREE.MeshPhongMaterial({color: 0x228822});
+  const ground = new THREE.Mesh(groundGeo, groundMat);
+  ground.rotation.x = -Math.PI / 2;
+  scene.add(ground);
+
+  // --- Buildings ---
+  function createBuilding(width, depth, height, color) {
+    const geo = new THREE.BoxGeometry(width, height, depth);
+    const mat = new THREE.MeshPhongMaterial({color});
+    const building = new THREE.Mesh(geo, mat);
+    building.position.y = height / 2;
+    return building;
+  }
+
+  // Generate buildings mostly on sides (-30 to -10 and 10 to 30 on X-axis)
+  const buildings = [];
+  for(let i = 0; i < 50; i++) {
+    const width = 2 + Math.random() * 3;
+    const depth = 2 + Math.random() * 3;
+    const height = 5 + Math.random() * 20;
+    const color = new THREE.Color(0.5 + Math.random()*0.5, 0.5 + Math.random()*0.5, 0.5 + Math.random()*0.5);
+
+    const building = createBuilding(width, depth, height, color);
+
+    // Position on left or right side randomly
+    const side = Math.random() < 0.5 ? -1 : 1;
+    building.position.x = side * (10 + Math.random() * 20);
+    building.position.z = (Math.random() - 0.5) * 80;
+
+    scene.add(building);
+    buildings.push(building);
+  }
+
+  // --- Drone creation with spinning rotors ---
+  function createDrone() {
+    const drone = new THREE.Group();
+
+    // Central body
+    const bodyGeo = new THREE.BoxGeometry(1.2, 0.3, 1);
+    const bodyMat = new THREE.MeshPhongMaterial({ color: 0xff3333 });
+    const body = new THREE.Mesh(bodyGeo, bodyMat);
+    drone.add(body);
+
+    // Four arms
+    const armGeo = new THREE.BoxGeometry(0.1, 0.1, 1);
+    const armMat = new THREE.MeshPhongMaterial({ color: 0x222222 });
+
+    const positions = [
+      [0.6, 0, 0.6],
+      [-0.6, 0, 0.6],
+      [-0.6, 0, -0.6],
+      [0.6, 0, -0.6],
+    ];
+
+    positions.forEach(pos => {
+      const arm = new THREE.Mesh(armGeo, armMat);
+      arm.position.set(pos[0], 0, pos[2]);
+      arm.rotation.y = Math.atan2(pos[0], pos[2]);
+      drone.add(arm);
+    });
+
+    // Rotors
+    const rotorGeo = new THREE.CylinderGeometry(0.15, 0.15, 0.05, 16);
+    const rotorMat = new THREE.MeshPhongMaterial({ color: 0x333333 });
+
+    drone.userData.rotors = [];
+
+    positions.forEach(pos => {
+      const rotor = new THREE.Mesh(rotorGeo, rotorMat);
+      rotor.position.set(pos[0], 0.15, pos[2]);
+      rotor.rotation.x = Math.PI / 2;
+      drone.add(rotor);
+      drone.userData.rotors.push(rotor);
+    });
+
+    // Front camera light
+    const camGeo = new THREE.SphereGeometry(0.1, 8, 8);
+    const camMat = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+    const cameraLight = new THREE.Mesh(camGeo, camMat);
+    cameraLight.position.set(0, 0.1, 0.6);
+    drone.add(cameraLight);
+
+    return drone;
+  }
+
+  const drone = createDrone();
+  drone.position.set(0, 2, 0);
+  scene.add(drone);
+
+  // Set initial camera position and orientation to view the drone properly
+  camera.position.set(drone.position.x, drone.position.y + 5, drone.position.z + 10);
+  camera.lookAt(drone.position);
+
+  // Controls
+  const move = {forward:false, backward:false, left:false, right:false, up:false, down:false};
+
+  window.addEventListener('keydown', e => {
+    switch(e.code) {
+      case 'KeyW': move.forward = true; break;
+      case 'KeyS': move.backward = true; break;
+      case 'KeyA': move.left = true; break;
+      case 'KeyD': move.right = true; break;
+      case 'Space': move.up = true; break;
+      case 'ShiftLeft': move.down = true; break;
+    }
+  });
+  window.addEventListener('keyup', e => {
+    switch(e.code) {
+      case 'KeyW': move.forward = false; break;
+      case 'KeyS': move.backward = false; break;
+      case 'KeyA': move.left = false; break;
+      case 'KeyD': move.right = false; break;
+      case 'Space': move.up = false; break;
+      case 'ShiftLeft': move.down = false; break;
+    }
+  });
+
+  // Birds
+  function createBird() {
+    const bird = new THREE.Group();
+
+    const bodyGeo = new THREE.ConeGeometry(0.2, 0.5, 8);
+    const bodyMat = new THREE.MeshPhongMaterial({color: 0x333333});
+    const body = new THREE.Mesh(bodyGeo, bodyMat);
+    body.rotation.x = Math.PI / 2;
+    bird.add(body);
+
+    const wingGeo = new THREE.BoxGeometry(0.6, 0.05, 0.3);
+    const wingMat = new THREE.MeshPhongMaterial({color: 0x555555});
+    const leftWing = new THREE.Mesh(wingGeo, wingMat);
+    leftWing.position.set(-0.3, 0, 0);
+    bird.add(leftWing);
+
+    const rightWing = leftWing.clone();
+    rightWing.position.set(0.3, 0, 0);
+    bird.add(rightWing);
+
+    return bird;
+  }
+
+  const birds = [];
+  const birdCount = 10;
+  for(let i = 0; i < birdCount; i++) {
+    const b = createBird();
+    b.position.set(
+      (Math.random() - 0.5) * 50,
+      3 + Math.random() * 5,
+      (Math.random() - 0.5) * 50
+    );
+    b.userData = {
+      velocity: new THREE.Vector3(
+        (Math.random() - 0.5) * 0.1,
+        0,
+        (Math.random() - 0.5) * 0.1
+      )
+    };
+    scene.add(b);
+    birds.push(b);
+  }
+
+  // Rings
+  const rings = [];
+  const ringCount = 20;
+  const ringRadius = 1;
+  for(let i = 0; i < ringCount; i++) {
+    const ringGeo = new THREE.TorusGeometry(ringRadius, 0.1, 16, 100);
+    const ringMat = new THREE.MeshPhongMaterial({color: 0xffff00});
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+
+    ring.position.set(
+      (Math.random() - 0.5) * 60,
+      2 + Math.random() * 6,
+      -i * 10 - 10
+    );
+    ring.rotation.x = Math.PI / 2;
+    ring.userData.passed = false;
+
+    scene.add(ring);
+    rings.push(ring);
+  }
+
+  // Score display
+  let score = 0;
+  const scoreElem = document.getElementById('score');
+
+  const speed = 0.1;
+
+  function animate() {
+    requestAnimationFrame(animate);
+
+    // Drone movement
+    if (move.forward) drone.position.z -= speed;
+    if (move.backward) drone.position.z += speed;
+    if (move.left) drone.position.x -= speed;
+    if (move.right) drone.position.x += speed;
+    if (move.up) drone.position.y += speed;
+    if (move.down) {
+      drone.position.y -= speed;
+      if (drone.position.y < 1) drone.position.y = 1;
+    }
+
+    // Smooth camera follow and lookAt using Vector3
+    const camTarget = new THREE.Vector3(drone.position.x, drone.position.y + 1, drone.position.z);
+    camera.position.lerp(new THREE.Vector3(drone.position.x, drone.position.y + 2.5, drone.position.z + 5), 0.1);
+    camera.lookAt(camTarget);
+
+    // Animate birds
+    birds.forEach(bird => {
+      bird.position.add(bird.userData.velocity);
+
+      if (bird.position.x > 30 || bird.position.x < -30) bird.userData.velocity.x *= -1;
+      if (bird.position.z > 30 || bird.position.z < -30) bird.userData.velocity.z *= -1;
+
+      const wingAngle = Math.sin(Date.now() * 0.01) * 0.5;
+      bird.children[1].rotation.z = wingAngle;
+      bird.children[2].rotation.z = -wingAngle;
+    });
+
+    // Animate rotors spinning
+    drone.userData.rotors.forEach(rotor => {
+      rotor.rotation.z += 0.3;
+    });
+
+    // Check rings passed
+    rings.forEach(ring => {
+      if (!ring.userData.passed) {
+        const dist = drone.position.distanceTo(ring.position);
+        if (dist < ringRadius) {
+          ring.userData.passed = true;
+          ring.material.color.set(0x00ff00);
+          score++;
+          scoreElem.textContent = 'Score: ' + score;
+        }
+      }
+    });
+
+    renderer.render(scene, camera);
+  }
+
+  animate();
+
+  // Handle window resize
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+</script>
+</body>
+</html>
