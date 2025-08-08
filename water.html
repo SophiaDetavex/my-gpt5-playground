@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>WebGL Ray-Traced Water Demo</title>
+<style>
+  body, html { margin: 0; height: 100%; overflow: hidden; }
+  canvas { width: 100%; height: 100%; display: block; }
+</style>
+</head>
+<body>
+<canvas id="glcanvas"></canvas>
+<script type="x-shader/x-vertex" id="vertexShader">
+attribute vec2 a_position;
+varying vec2 v_uv;
+void main() {
+    v_uv = a_position * 0.5 + 0.5;
+    gl_Position = vec4(a_position, 0, 1);
+}
+</script>
+<script type="x-shader/x-fragment" id="fragmentShader">
+precision highp float;
+
+varying vec2 v_uv;
+uniform float u_time;
+uniform vec2 u_resolution;
+
+// Camera and ray setup
+vec3 cameraPos = vec3(0.0, 1.0, 3.0);
+vec3 lightDir = normalize(vec3(-0.5, 1.0, 0.5));
+
+// Simple water wave function
+float waveHeight(vec2 p, float t) {
+    float wave1 = sin(10.0 * p.x + t) * 0.05;
+    float wave2 = cos(15.0 * p.y + t * 1.5) * 0.03;
+    return wave1 + wave2;
+}
+
+// Simple ray-plane intersection
+float intersectWaterPlane(vec3 ro, vec3 rd, float time) {
+    // water plane at y = waveHeight at (x,z)
+    // iterative approach:
+    float t = 0.0;
+    for(int i = 0; i < 64; i++) {
+        vec3 pos = ro + rd * t;
+        float height = waveHeight(pos.xz, time);
+        float diff = pos.y - height;
+        if(diff < 0.001) break;
+        t += diff * 0.5;
+        if(t > 10.0) break;
+    }
+    return t;
+}
+
+void main() {
+    // Normalize pixel coordinates to [-1,1]
+    vec2 uv = (v_uv * 2.0) - 1.0;
+    uv.x *= u_resolution.x / u_resolution.y;
+
+    // Generate ray direction from camera through pixel
+    vec3 rayDir = normalize(vec3(uv.x, uv.y - 0.3, -1.0));
+
+    // Ray origin
+    vec3 rayOrigin = cameraPos;
+
+    // Find intersection with water surface
+    float t = intersectWaterPlane(rayOrigin, rayDir, u_time);
+
+    if(t > 10.0) {
+        // Sky color if no hit
+        gl_FragColor = vec4(0.6, 0.8, 1.0, 1.0);
+        return;
+    }
+
+    // Position on water surface
+    vec3 hitPos = rayOrigin + rayDir * t;
+
+    // Surface normal from height map derivative
+    float eps = 0.001;
+    float heightCenter = waveHeight(hitPos.xz, u_time);
+    float heightX = waveHeight(hitPos.xz + vec2(eps, 0.0), u_time);
+    float heightZ = waveHeight(hitPos.xz + vec2(0.0, eps), u_time);
+    vec3 normal = normalize(vec3(heightCenter - heightX, eps, heightCenter - heightZ));
+
+    // Calculate reflection vector
+    vec3 reflected = reflect(rayDir, normal);
+
+    // Fresnel approximation
+    float fresnel = pow(1.0 - max(dot(-rayDir, normal), 0.0), 3.0) * 0.65 + 0.35;
+
+    // Simple reflection color (sky)
+    vec3 skyColor = vec3(0.6, 0.8, 1.0);
+
+    // Simple underwater color
+    vec3 waterColor = vec3(0.0, 0.3, 0.5);
+
+    // Mix based on fresnel
+    vec3 color = mix(waterColor, skyColor, fresnel);
+
+    // Add simple lighting on normal
+    float diff = max(dot(normal, lightDir), 0.0);
+    color *= diff * 1.2;
+
+    gl_FragColor = vec4(color, 1.0);
+}
+</script>
+<script>
+function createShader(gl, type, source) {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    if(!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        console.error('Shader compile failed:', gl.getShaderInfoLog(shader));
+        gl.deleteShader(shader);
+        return null;
+    }
+    return shader;
+}
+
+function createProgram(gl, vsSource, fsSource) {
+    const vertexShader = createShader(gl, gl.VERTEX_SHADER, vsSource);
+    const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fsSource);
+    const program = gl.createProgram();
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    if(!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        console.error('Program link failed:', gl.getProgramInfoLog(program));
+        return null;
+    }
+    return program;
+}
+
+function main() {
+    const canvas = document.getElementById('glcanvas');
+    const gl = canvas.getContext('webgl');
+    if(!gl) {
+        alert('WebGL not supported');
+        return;
+    }
+
+    const vertexSource = document.getElementById('vertexShader').text;
+    const fragmentSource = document.getElementById('fragmentShader').text;
+    const program = createProgram(gl, vertexSource, fragmentSource);
+
+    const positionBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+
+    // Fullscreen quad (two triangles)
+    const positions = new Float32Array([
+        -1, -1,
+         1, -1,
+        -1,  1,
+        -1,  1,
+         1, -1,
+         1,  1
+    ]);
+    gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+
+    const aPositionLoc = gl.getAttribLocation(program, 'a_position');
+    gl.enableVertexAttribArray(aPositionLoc);
+    gl.vertexAttribPointer(aPositionLoc, 2, gl.FLOAT, false, 0, 0);
+
+    const uTimeLoc = gl.getUniformLocation(program, 'u_time');
+    const uResolutionLoc = gl.getUniformLocation(program, 'u_resolution');
+
+    function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        gl.viewport(0, 0, canvas.width, canvas.height);
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    let startTime = performance.now();
+
+    function render() {
+        const currentTime = (performance.now() - startTime) / 1000;
+
+        gl.clearColor(0, 0, 0, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        gl.useProgram(program);
+        gl.uniform1f(uTimeLoc, currentTime);
+        gl.uniform2f(uResolutionLoc, canvas.width, canvas.height);
+
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+        requestAnimationFrame(render);
+    }
+
+    requestAnimationFrame(render);
+}
+
+main();
+</script>
+</body>
+</html>
